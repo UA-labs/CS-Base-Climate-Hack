@@ -55,6 +55,7 @@ def send_email(subject, recevier_mail, name, address):
         server.sendmail(sender_email,recevier_mail,msg.as_string())
 
 
+
 if __name__ == "__main__":
     send_email(
         subject="Wildfire Alet in your area!",
