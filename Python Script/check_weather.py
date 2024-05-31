@@ -1,36 +1,28 @@
 import joblib
+import pandas
 from dotenv import load_dotenv
 import numpy as np
 import pandas as pd
 import requests
-from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LinearRegression
 import os
 import datetime
 
 
+def load_dataset():
+    """
+    :return: pandas dataframe
+    """
+    dataset = pd.read_csv('fp-historical-wildfire-data-2006-2023-filtered - Data.csv')
+    return dataset
+
+
 def predict(environment_condition: dict):
     """
-    :param scaler: model/scaler.joblib
-    :param model: model/padam.joblib
     :param environment_condition:
-                data = {
-                    "fire_location_latitude": 53.81625046092191,
-                    "fire_location_longitude": -117.21135002795386,
-                    "temperature": 11,
-                    "relative_humidity": 30,
-                    "wind_speed": 5,
-                    "month": 4,
-                    'weather_conditions_over_fire_CB Dry': False,
-                    'weather_conditions_over_fire_CB Wet': False,
-                    'weather_conditions_over_fire_Clear': True,
-                    'weather_conditions_over_fire_Cloudy': False,
-                    'weather_conditions_over_fire_Rainshowers': False
-                }
-    :return:
+    :return: prediction value
     """
-    model = joblib.load('model/padam.joblib')
-    scaler = joblib.load('model/scaler.joblib')
+    model = joblib.load('padam.joblib')
+    scaler = joblib.load('scaler.joblib')
     features = np.array([[
         environment_condition['fire_location_latitude'],
         environment_condition['fire_location_longitude'],
@@ -71,13 +63,15 @@ def call_api_data(latitude: float, longtitude: float) -> dict:
     :param: latitude, longtitude
     :return: dictionary of weather data
     """
-    API_KEY = os.getenv("OPENWEATHER_API_KEY")
+    API_KEY = os.getenv("OPEN_WEATHER_API_KEY")
+    print(API_KEY)  # This should print your API key if it's loaded correctly
     base_url = f"https://api.openweathermap.org/data/2.5/weather?lat={round(latitude, 2)}&lon={round(longtitude, 2)}&appid={API_KEY}"
 
     response = requests.get(base_url)
     data = response.json()
 
     return data
+
 
 def check_weather_condition(data: dict):
     if data["weather"] == "Clear":
@@ -87,15 +81,19 @@ def check_weather_condition(data: dict):
     elif data["weather"] == "Rain":
         data['weather_conditions_over_fire_Rainshowers'] = True
 
+
 def convert_timestamp(timestamp):
     dt_object = datetime.datetime.fromtimestamp(timestamp)
     # Extract the month
     month = dt_object.month
     return month
 
-def load_weather_data(data: dict) -> dict:
+
+def load_weather_data(data: dict, lat: float, lon: float) -> dict:
     """
     :param data: data that we get from the API call
+    :param lat: latitude of the location
+    :param lon: longitude of the location
     :return: cleaned dictionary for latitude, longitude, temperature, relative humidity, wind speed, month, weather condition
     """
     # If the response contains the 'main' field, it was successful
@@ -156,10 +154,12 @@ def load_weather_data(data: dict) -> dict:
         report = data["weather"][0]['main']
         month = convert_timestamp(data['dt'])
         return_dict = {
-            'temprature': temperature,
-            'humidity': humidity,
+            'fire_location_latitude': lat,
+            'fire_location_longitude': lon,
+            'temperature': temperature,
+            'relative_humidity': humidity,
             'weather': report,
-            'wind speed': wind_speed,
+            'wind_speed': wind_speed,
             'month': month,
             'weather_conditions_over_fire_CB Dry': False,
             'weather_conditions_over_fire_CB Wet': False,
@@ -174,5 +174,51 @@ def load_weather_data(data: dict) -> dict:
         raise ValueError
 
 
-data ={}
-print(load_weather_data(data))
+def get_coordinate(dataset: pandas.core.frame.DataFrame):
+    dataset["fire_location_latitude"] = dataset["fire_location_latitude"].round(2)
+    dataset["fire_location_longitude"] = dataset["fire_location_longitude"].round(2)
+
+    # Remove duplicate rows
+    dataset.drop_duplicates(subset=["fire_location_latitude", "fire_location_longitude"], keep='first', inplace=True)
+
+    latitude = dataset["fire_location_latitude"]
+    longitude = dataset["fire_location_longitude"]
+
+    dataset = {
+        'latitude': latitude,
+        'longitude': longitude
+    }
+    return dataset
+
+def check_alberta_condition():
+    # Load the dataset
+    dataset = get_coordinate(load_dataset())
+    danger_zone = {}
+    danger_zone_count = 0
+
+    # Loop through all the latitude and longitude values
+    for lat, lon in zip(dataset['latitude'], dataset['longitude']):
+        # Call the API to get the weather data
+        weather_data = call_api_data(lat, lon)
+
+        # Process the weather data
+        processed_data = load_weather_data(weather_data, lat, lon)
+
+        # You can now use the processed_data for further processing or analysis
+        prediction = predict(processed_data)
+        if prediction >= 0.6:
+            danger_zone[danger_zone_count] = [lat, lon]
+            danger_zone_count += 1
+            if danger_zone_count == 5:
+                break
+    return danger_zone
+
+
+def main():
+    dataset = load_dataset()
+    get_coordinate(dataset=dataset)
+    print("return", check_alberta_condition())
+
+
+if __name__ == '__main__':
+    main()
